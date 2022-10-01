@@ -1,0 +1,12 @@
+[submodule "tox_ngc_ext"]
+	path = tox_ngc_ext
+	url = https://github.com/Green-Sky/tox_ngc_ext
+	ignore = dirty
+[submodule "tox_ngc_ft1"]
+	path = tox_ngc_ft1
+	url = https://github.com/Green-Sky/tox_ngc_ft1
+	ignore = dirty
+[submodule "tox_ngc_hs1"]
+	path = tox_ngc_hs1
+	url = https://github.com/Green-Sky/tox_ngc_hs1
+	ignore = dirty

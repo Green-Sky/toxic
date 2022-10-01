@@ -67,6 +67,9 @@
 #include "toxic.h"
 #include "windows.h"
 
+#include "ngc_hs1.h"
+#include "ngc_ft1.h"
+
 #ifdef X11
 #include "x11focus.h"
 #endif
@@ -116,6 +119,10 @@ static struct user_password {
     char pass[MAX_PASSWORD_LEN + 1];
     int len;
 } user_password;
+
+NGC_EXT_CTX* g_ngc_ext_ctx = NULL;
+NGC_FT1* g_ngc_ft1_ctx = NULL;
+NGC_HS1* g_ngc_hs1_ctx = NULL;
 
 static time_t last_signal_time;
 
@@ -174,6 +181,19 @@ void free_global_data(void)
     if (user_settings) {
         free(user_settings);
         user_settings = NULL;
+    }
+
+    if (g_ngc_hs1_ctx) {
+        NGC_HS1_kill(g_ngc_hs1_ctx);
+        g_ngc_hs1_ctx = NULL;
+    }
+    if (g_ngc_ft1_ctx) {
+        NGC_FT1_kill(g_ngc_ft1_ctx);
+        g_ngc_ft1_ctx = NULL;
+    }
+    if (g_ngc_ext_ctx) {
+        NGC_EXT_kill(g_ngc_ext_ctx);
+        g_ngc_ext_ctx = NULL;
     }
 }
 
@@ -842,6 +862,57 @@ int store_data(Tox *m, const char *path)
     return 0;
 }
 
+static void hs_shim_group_message(
+    Tox *tox,
+
+    uint32_t group_number,
+    uint32_t peer_id,
+
+    Tox_Message_Type type,
+    const uint8_t *message, size_t length,
+    uint32_t message_id,
+
+    void *user_data
+) {
+    on_group_message(tox, group_number, peer_id, type, message, length, message_id, user_data);
+    NGC_HS1_record_message(tox, g_ngc_hs1_ctx, group_number, peer_id, type, message, length, message_id);
+}
+
+static void hs_cb_group_message(
+    Tox *tox,
+
+    uint32_t group_number,
+    uint32_t peer_id,
+
+    Tox_Message_Type type,
+    const uint8_t *message, size_t length,
+    uint32_t message_id
+) {
+    on_group_message(tox, group_number, peer_id, type, message, length, message_id, NULL);
+}
+
+static void hs_shim_group_custom_packet_cb(
+    Tox *tox,
+    uint32_t group_number,
+    uint32_t peer_id,
+    const uint8_t *data,
+    size_t length,
+    void *user_data
+) {
+    // just forward
+    NGC_EXT_handle_group_custom_packet(tox, g_ngc_ext_ctx, group_number, peer_id, data, length);
+}
+
+static void hs_shim_group_peer_join_cb(Tox *tox, uint32_t group_number, uint32_t peer_id, void *user_data) {
+    on_group_peer_join(tox, group_number, peer_id, user_data);
+    NGC_HS1_peer_online(tox, g_ngc_hs1_ctx, group_number, peer_id, true);
+}
+
+static void hs_shim_group_peer_exit_cb(Tox *tox, uint32_t group_number, uint32_t peer_id, Tox_Group_Exit_Type exit_type, const uint8_t *name, size_t name_length, const uint8_t *part_message, size_t length, void *user_data) {
+    on_group_peer_exit(tox, group_number, peer_id, exit_type, name, name_length, part_message, length, user_data);
+    NGC_HS1_peer_online(tox, g_ngc_hs1_ctx, group_number, peer_id, false);
+}
+
 static void init_tox_callbacks(Tox *m)
 {
     tox_callback_self_connection_status(m, on_self_connection_status);
@@ -864,11 +935,17 @@ static void init_tox_callbacks(Tox *m)
     tox_callback_file_recv_chunk(m, on_file_recv_chunk);
     tox_callback_friend_lossless_packet(m, on_lossless_custom_packet);
     tox_callback_group_invite(m, on_group_invite);
-    tox_callback_group_message(m, on_group_message);
+    //tox_callback_group_message(m, on_group_message);
+    tox_callback_group_message(m, hs_shim_group_message);
+    NGC_HS1_register_callback_group_message(g_ngc_hs1_ctx, hs_cb_group_message);
     tox_callback_group_private_message(m, on_group_private_message);
+    tox_callback_group_custom_packet(m, hs_shim_group_custom_packet_cb);
+    tox_callback_group_custom_private_packet(m, hs_shim_group_custom_packet_cb);
     tox_callback_group_peer_status(m, on_group_status_change);
-    tox_callback_group_peer_join(m, on_group_peer_join);
-    tox_callback_group_peer_exit(m, on_group_peer_exit);
+    //tox_callback_group_peer_join(m, on_group_peer_join);
+    tox_callback_group_peer_join(m, hs_shim_group_peer_join_cb);
+    //tox_callback_group_peer_exit(m, on_group_peer_exit);
+    tox_callback_group_peer_exit(m, hs_shim_group_peer_exit_cb);
     tox_callback_group_peer_name(m, on_group_nick_change);
     tox_callback_group_topic(m, on_group_topic_change);
     tox_callback_group_peer_limit(m, on_group_peer_limit);
@@ -1116,6 +1193,22 @@ static Tox *load_toxic(char *data_path)
         queue_init_message("tox_new returned non-fatal error %d", new_err);
     }
 
+    g_ngc_ext_ctx = NGC_EXT_new();
+
+    struct NGC_FT1_options ft_opts;
+    g_ngc_ft1_ctx = NGC_FT1_new(&ft_opts);
+    NGC_FT1_register_ext(g_ngc_ft1_ctx, g_ngc_ext_ctx);
+
+    struct NGC_HS1_options hs_opts;
+    hs_opts.default_trust_level = 2;
+    hs_opts.record_others = true;
+    hs_opts.query_interval_per_peer = 15.f;
+    hs_opts.last_msg_ids_count = 5u;
+    hs_opts.ft_activity_timeout = 60.f;
+    g_ngc_hs1_ctx = NGC_HS1_new(&hs_opts);
+    NGC_HS1_register_ext(g_ngc_hs1_ctx, g_ngc_ext_ctx);
+    NGC_HS1_register_ft1(g_ngc_hs1_ctx, g_ngc_ft1_ctx);
+
     init_tox_callbacks(m);
     load_friendlist(m);
     load_blocklist(BLOCK_FILE);
@@ -1138,6 +1231,8 @@ static void do_toxic(Tox *m)
     }
 
     tox_iterate(m, NULL);
+    NGC_FT1_iterate(m, g_ngc_ft1_ctx);
+    NGC_HS1_iterate(m, g_ngc_hs1_ctx);
     do_tox_connection(m);
 
     pthread_mutex_unlock(&Winthread.lock);

@@ -3,27 +3,40 @@ CFG_DIR = $(BASE_DIR)/cfg
 
 -include $(CFG_DIR)/global_vars.mk
 
-LIBS = toxcore ncursesw libconfig libcurl
+#LIBS = toxcore ncursesw libconfig libcurl
+LIBS = ncursesw libconfig libcurl
 
 CFLAGS ?= -std=c99 -pthread -Wall -Wpedantic -Wunused -fstack-protector-all -Wvla -Wno-missing-braces
 CFLAGS += '-DTOXICVER="$(VERSION)"' -DHAVE_WIDECHAR -D_XOPEN_SOURCE_EXTENDED -D_FILE_OFFSET_BITS=64
 CFLAGS += '-DPACKAGE_DATADIR="$(abspath $(DATADIR))"'
+CFLAGS += -I../toxcore
+CFLAGS += -Itox_ngc_ext -Itox_ngc_ft1 -Itox_ngc_hs1
 CFLAGS += ${USER_CFLAGS}
-LDFLAGS ?=
+
+CXXFLAGS ?= -std=c++17 -pthread -Wall -Wpedantic -Wunused -fstack-protector-all -Wvla -Wno-missing-braces
+CXXFLAGS += -I../toxcore
+CXXFLAGS += -Itox_ngc_ext -Itox_ngc_ft1 -Itox_ngc_hs1
+CXXFLAGS += ${USER_CXXFLAGS}
+
+LDFLAGS ?= -L../toxcore/build -ltoxcore
+LDFLAGS += -lstdc++ # hack
 LDFLAGS += ${USER_LDFLAGS}
 
 OBJ = autocomplete.o avatars.o bootstrap.o chat.o chat_commands.o conference.o configdir.o curl_util.o execute.o
 OBJ += file_transfers.o friendlist.o global_commands.o conference_commands.o groupchats.o groupchat_commands.o help.o
 OBJ += input.o line_info.o log.o message_queue.o misc_tools.o name_lookup.o notify.o prompt.o qr_code.o settings.o
 OBJ += term_mplex.o toxic.o toxic_strings.o windows.o
+OBJ += ../tox_ngc_ext/ngc_ext.o ../tox_ngc_ft1/ngc_ft1.o ../tox_ngc_hs1/ngc_hs1.o
 
 # Check if debug build is enabled
 RELEASE := $(shell if [ -z "$(ENABLE_RELEASE)" ] || [ "$(ENABLE_RELEASE)" = "0" ] ; then echo disabled ; else echo enabled ; fi)
 ifneq ($(RELEASE), enabled)
 	CFLAGS += -O0 -g -DDEBUG
+	CXXFLAGS += -O0 -g -DDEBUG
 	LDFLAGS += -O0
 else
 	CFLAGS += -O2 -flto
+	CXXFLAGS += -O2 -flto
 	LDFLAGS += -O2 -flto
 endif
 
@@ -31,6 +44,8 @@ endif
 ASAN := $(shell if [ -z "$(ENABLE_ASAN)" ] || [ "$(ENABLE_ASAN)" = "0" ] ; then echo disabled ; else echo enabled ; fi)
 ifneq ($(ASAN), disabled)
 	CFLAGS += -fsanitize=address -fno-omit-frame-pointer
+	CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer
+	LDFLAGS += -fsanitize=address -fno-omit-frame-pointer
 endif
 
 # Check on wich system we are running
@@ -86,6 +101,14 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "  CC    $(@:$(BUILD_DIR)/%=%)"
 	@$(CC) $(CFLAGS) -o $(BUILD_DIR)/$*.o -c $(SRC_DIR)/$*.c
 	@$(CC) -MM $(CFLAGS) $(SRC_DIR)/$*.c >$(BUILD_DIR)/$*.d
+
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
+	@if [ ! -e $(BUILD_DIR) ]; then \
+		mkdir -p $(BUILD_DIR) ;\
+	fi
+	@echo "  CXX   $(@:$(BUILD_DIR)/%=%)"
+	@$(CXX) $(CXXFLAGS) -o $(BUILD_DIR)/$*.o -c $(SRC_DIR)/$*.cpp
+	@$(CXX) -MM $(CXXFLAGS) $(SRC_DIR)/$*.cpp >$(BUILD_DIR)/$*.d
 
 clean:
 	rm -f $(BUILD_DIR)/*.d $(BUILD_DIR)/*.o $(BUILD_DIR)/toxic

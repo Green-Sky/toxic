@@ -62,11 +62,15 @@
 #include "autocomplete.h"
 #include "audio_device.h"
 
+#include "ngc_hs1.h"
+
 extern char *DATA_FILE;
 static int max_groupchat_index = 0;
 
 extern struct user_settings *user_settings;
 extern struct Winthread Winthread;
+
+extern NGC_HS1* g_ngc_hs1_ctx;
 
 #define GROUP_SIDEBAR_OFFSET 3    /* Offset for the peer number box at the top of the statusbar */
 
@@ -1383,7 +1387,8 @@ static void send_group_message(ToxWindow *self, Tox *m, uint32_t groupnumber, co
 
     Tox_Err_Group_Send_Message err;
 
-    if (!tox_group_send_message(m, groupnumber, type, (uint8_t *) msg, strlen(msg), NULL, &err)) {
+    //if (!tox_group_send_message(m, groupnumber, type, (uint8_t *) msg, strlen(msg), NULL, &err)) {
+    if (!NGC_HS1_shim_group_send_message(m, g_ngc_hs1_ctx, groupnumber, type, (uint8_t *) msg, strlen(msg), NULL, &err)) {
         if (err == TOX_ERR_GROUP_SEND_MESSAGE_PERMISSIONS) {
             const Tox_Group_Role role = tox_group_self_get_role(m, groupnumber, NULL);
 
