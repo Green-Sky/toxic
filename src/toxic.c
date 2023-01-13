@@ -46,6 +46,7 @@
 #include <curl/curl.h>
 #include <tox/toxencryptsave.h>
 #include <tox/tox.h>
+#include <tox/tox_private.h>
 
 #include "audio_device.h"
 #include "bootstrap.h"
@@ -1234,6 +1235,15 @@ static void do_toxic(Tox *m)
     NGC_FT1_iterate(m, g_ngc_ft1_ctx);
     NGC_HS1_iterate(m, g_ngc_hs1_ctx);
     do_tox_connection(m);
+
+#if 1
+    static float ratio = 0.f;
+    float new_ratio = tox_dht_get_announce_capability_ratio(m);
+    if (new_ratio != ratio) {
+        ratio = new_ratio;
+        fprintf(stderr, "dht cap ratio: %f\n", ratio);
+    }
+#endif
 
     pthread_mutex_unlock(&Winthread.lock);
 }
